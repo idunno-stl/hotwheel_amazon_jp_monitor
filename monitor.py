@@ -12,16 +12,14 @@ DATA_FILE = "latest_seen.json"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 IS_MANUAL = os.getenv("IS_MANUAL") == "true"
-# Replace GITHUB_REPO with your 'username/repo-name'
-REPO_URL = f"https://github.com/{os.getenv('GITHUB_REPOSITORY')}/actions/workflows/monitor.yml"
+REPO = os.getenv('GITHUB_REPOSITORY')
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    # Adding a 'Check Now' button link at the bottom of every message
+    # Button that triggers the GitHub Action again
     reply_markup = {
         "inline_keyboard": [[
-            {"text": "🔄 Check Now (Manual)", "url": REPO_URL},
-            {"text": "📂 View Memory", "url": f"https://github.com/{os.getenv('GITHUB_REPOSITORY')}/blob/main/{DATA_FILE}"}
+            {"text": "🔄 Refresh / View Memory", "url": f"https://github.com/{REPO}/actions/workflows/monitor.yml"}
         ]]
     }
     payload = {
@@ -33,27 +31,31 @@ def send_telegram(msg):
     requests.post(url, data=payload, timeout=15)
 
 def main():
-    # 1. Create Timestamp
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    if IS_MANUAL:
-        send_telegram(f"🚀 <b>Manual Check Triggered</b>\nTime: <code>{now}</code>\nFiltering top 5...")
-
+    # Load Memory
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, "w", encoding="utf-8") as f: json.dump([], f)
     
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
-            old_asins = {item["asin"] for item in json.load(f)}
+            old_data = json.load(f)
+            old_asins = {item["asin"] for item in old_data}
     except:
+        old_data = []
         old_asins = set()
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "Accept-Language": "ja-JP,ja;q=0.9"
-    }
-
-    time.sleep(random.uniform(2, 5))
+    # IF MANUAL: Just show what's in the memory and exit
+    if IS_MANUAL and old_data:
+        memory_msg = f"📂 <b>Current Memory (Top 5):</b>\nTime: <code>{now}</code>\n\n"
+        for i, item in enumerate(old_data, 1):
+            memory_msg += f"{i}. <a href='{item['link']}'>{item['title']}</a>\n\n"
+        send_telegram(memory_msg)
+        # We continue to check Amazon anyway to see if something changed while we were away
+    
+    # Stealth Headers
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept-Language": "ja-JP"}
+    time.sleep(random.uniform(2, 4))
 
     try:
         r = requests.get(AMAZON_URL, headers=headers, timeout=30)
@@ -62,41 +64,25 @@ def main():
         
         search_results = soup.select("div[data-component-type='s-search-result']")
         for div in search_results:
-            if "sponsored" in div.get_text().lower() or "スポンサー" in div.get_text():
-                continue
-
-            asin = div.get("data-asin")
-            title_elem = div.select_one("h2 a span")
-            
+            if any(x in div.get_text().lower() for x in ["sponsored", "スポンサー"]): continue
+            asin, title_elem = div.get("data-asin"), div.select_one("h2 a span")
             if asin and title_elem:
-                current_items.append({
-                    "asin": asin,
-                    "title": title_elem.get_text(strip=True),
-                    "link": f"https://www.amazon.co.jp/dp/{asin}"
-                })
-            
+                current_items.append({"asin": asin, "title": title_elem.get_text(strip=True), "link": f"https://www.amazon.co.jp/dp/{asin}"})
             if len(current_items) >= 5: break
 
-        new_count = 0
+        # Check for NEW items
+        new_found = False
         for item in current_items:
             if item["asin"] not in old_asins:
-                msg = (
-                    f"🚨 <b>NEW HOT WHEELS</b>\n\n"
-                    f"{item['title']}\n\n"
-                    f"🕒 Detected at: <code>{now}</code>\n"
-                    f"🔗 <a href='{item['link']}'>Amazon Link</a>"
-                )
-                send_telegram(msg)
-                new_count += 1
+                send_telegram(f"🚨 <b>NEW ITEM FOUND!</b>\n\n{item['title']}\n🔗 <a href='{item['link']}'>Link</a>")
+                new_found = True
 
-        if IS_MANUAL and new_count == 0:
-            send_telegram(f"✅ <b>No changes.</b>\nTop 5 items match the memory.\nCheck Time: <code>{now}</code>")
-
+        # Save current state
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(current_items, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        if IS_MANUAL: send_telegram(f"❌ Error at {now}: {e}")
+        if IS_MANUAL: send_telegram(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     main()
