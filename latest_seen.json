@@ -1,11 +1,6 @@
 {
   "asins": [
     {
-      "asin": "B0FLFTQRH5",
-      "title": "Hot Wheels 1963 T-Bird、Classics Series 1 [Hot Pink] #13/25。",
-      "link": "https://www.amazon.co.jp/dp/B0FLFTQRH5"
-    },
-    {
       "asin": "B0FJZYFVQV",
       "title": "ホットウィール(Hot Wheels) カーカルチャー ジャパンヒストリックス5 '77 トヨタ セリカ 乗り物おもちゃ ミニカー 3歳から ブラック JKD98",
       "link": "https://www.amazon.co.jp/dp/B0FJZYFVQV"
@@ -24,7 +19,12 @@
       "asin": "B0FK1976V5",
       "title": "ホットウィール(Hot Wheels) カーカルチャー ジャパンヒストリックス5 日産 スカイライン 2000GT-R LBWK 乗り物おもちゃ ミニカー 3歳から ブルー JKF11",
       "link": "https://www.amazon.co.jp/dp/B0FK1976V5"
+    },
+    {
+      "asin": "B0FK155WQZ",
+      "title": "ホットウィール(Hot Wheels) カーカルチャー ジャパンヒストリックス5 '88 ホンダ CRX 乗り物おもちゃ ミニカー 3歳から シルバー JKF13",
+      "link": "https://www.amazon.co.jp/dp/B0FK155WQZ"
     }
   ],
-  "run_count": 3
+  "run_count": 4
 }
