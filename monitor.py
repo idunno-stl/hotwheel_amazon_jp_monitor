@@ -21,7 +21,7 @@ def main():
     now = datetime.now().strftime("%H:%M")
     
     if IS_MANUAL:
-        send_telegram("🚀 <b>Google Proxy Scan Started...</b>")
+        send_telegram("🚀 <b>Manual Scan Started...</b>")
 
     # 1. Load Memory
     if not os.path.exists(DATA_FILE):
@@ -32,7 +32,6 @@ def main():
 
     # 2. Fetch via Google Proxy
     try:
-        # We send the Amazon URL as a parameter to our Google Script
         r = requests.get(PROXY_URL, params={'url': AMAZON_URL}, timeout=60)
         
         if r.status_code != 200:
@@ -41,23 +40,46 @@ def main():
 
         soup = BeautifulSoup(r.text, "html.parser")
         current_items = []
+
+        # --- NEW FLEXIBLE SEARCH LOGIC ---
+        # Method 1: Standard Search Result Divs
         results = soup.select("div[data-component-type='s-search-result']")
         
+        # Method 2: If Method 1 fails, look for any product-looking containers
+        if not results:
+            results = soup.select(".s-result-item[data-asin]")
+
         for div in results:
-            if any(x in div.get_text().lower() for x in ["sponsored", "スポンサー"]): continue
             asin = div.get("data-asin")
-            title = div.select_one("h2 a span")
-            if asin and title:
-                current_items.append({"asin": asin, "title": title.get_text(strip=True), "link": f"https://www.amazon.co.jp/dp/{asin}"})
+            if not asin: continue
+            
+            # Skip sponsored
+            if "sponsored" in div.get_text().lower() or "スポンサー" in div.get_text().lower():
+                continue
+
+            # Try different ways to find the title
+            title_elem = div.select_one("h2 a span") or div.select_one(".a-size-base-plus") or div.select_one("h2")
+            
+            if title_elem:
+                title_text = title_elem.get_text(strip=True)
+                current_items.append({
+                    "asin": asin, 
+                    "title": title_text, 
+                    "link": f"https://www.amazon.co.jp/dp/{asin}"
+                })
+            
             if len(current_items) >= 5: break
 
+        # 3. Logic
         if not current_items:
-            if IS_MANUAL: send_telegram("❌ Proxy worked, but no items found on page.")
+            # If still nothing, let's see a snippet of what the proxy actually sees
+            if IS_MANUAL:
+                snippet = r.text[:200].replace("<", "&lt;") # Show a tiny bit of HTML for debugging
+                send_telegram(f"❌ <b>No items found.</b>\nHTML start: <code>{snippet}</code>")
             return
 
-        # 3. Logic
         if IS_MANUAL:
-            report = f"📋 <b>Current Top 5 (Via Google)</b>\n\n"
+            report = f"📋 <b>Current Top 5</b>\n\n"
             for i, item in enumerate(current_items, 1):
                 report += f"{i}. <a href='{item['link']}'>{item['title']}</a>\n\n"
             send_telegram(report)
