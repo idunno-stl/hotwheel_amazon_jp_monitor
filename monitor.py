@@ -1,6 +1,7 @@
 import requests
 import json
 import os
+import re
 from datetime import datetime
 from bs4 import BeautifulSoup
 
@@ -21,7 +22,7 @@ def main():
     now = datetime.now().strftime("%H:%M")
     
     if IS_MANUAL:
-        send_telegram("🚀 <b>Manual Scan Started...</b>")
+        send_telegram("🚀 <b>Deep Scan Started...</b>")
 
     # 1. Load Memory
     if not os.path.exists(DATA_FILE):
@@ -34,65 +35,62 @@ def main():
     try:
         r = requests.get(PROXY_URL, params={'url': AMAZON_URL}, timeout=60)
         
-        if r.status_code != 200:
-            if IS_MANUAL: send_telegram(f"❌ Proxy Error: {r.status_code}")
+        # Check if we got a "Security" page
+        if "api-services-support@amazon.com" in r.text or "not a robot" in r.text:
+            if IS_MANUAL: send_telegram("❌ <b>Blocked:</b> Amazon detected the Google Proxy as a bot. Retrying in 15 mins...")
             return
 
         soup = BeautifulSoup(r.text, "html.parser")
         current_items = []
 
-        # --- NEW FLEXIBLE SEARCH LOGIC ---
-        # Method 1: Standard Search Result Divs
-        results = soup.select("div[data-component-type='s-search-result']")
-        
-        # Method 2: If Method 1 fails, look for any product-looking containers
-        if not results:
-            results = soup.select(".s-result-item[data-asin]")
+        # Find ALL divs that might be products
+        items = soup.find_all("div", {"data-asin": True})
 
-        for div in results:
-            asin = div.get("data-asin")
-            if not asin: continue
+        for item in items:
+            asin = item.get("data-asin")
+            if not asin or len(asin) != 10: continue
             
-            # Skip sponsored
-            if "sponsored" in div.get_text().lower() or "スポンサー" in div.get_text().lower():
+            # Skip Sponsored
+            if any(x in item.get_text().lower() for x in ["sponsored", "スポンサー"]):
                 continue
 
-            # Try different ways to find the title
-            title_elem = div.select_one("h2 a span") or div.select_one(".a-size-base-plus") or div.select_one("h2")
-            
-            if title_elem:
-                title_text = title_elem.get_text(strip=True)
-                current_items.append({
-                    "asin": asin, 
-                    "title": title_text, 
-                    "link": f"https://www.amazon.co.jp/dp/{asin}"
-                })
+            # Try to get title from the best available source in the div
+            title_node = item.select_one("h2 a span") or item.select_one("h2") or item.select_one(".a-size-base-plus")
+            title = title_node.get_text(strip=True) if title_node else f"Product {asin}"
+
+            current_items.append({
+                "asin": asin,
+                "title": title,
+                "link": f"https://www.amazon.co.jp/dp/{asin}"
+            })
             
             if len(current_items) >= 5: break
 
-        # 3. Logic
+        # 3. Logic & Reporting
         if not current_items:
-            # If still nothing, let's see a snippet of what the proxy actually sees
             if IS_MANUAL:
-                snippet = r.text[:200].replace("<", "&lt;") # Show a tiny bit of HTML for debugging
-                send_telegram(f"❌ <b>No items found.</b>\nHTML start: <code>{snippet}</code>")
+                # Send a bit more of the HTML so I can see what's wrong
+                debug_txt = r.text[:400].replace("<", "&lt;")
+                send_telegram(f"❌ <b>Still no items.</b>\nDebug: <code>{debug_txt}</code>")
             return
 
         if IS_MANUAL:
-            report = f"📋 <b>Current Top 5</b>\n\n"
+            report = f"📋 <b>Latest Items Found:</b>\n\n"
             for i, item in enumerate(current_items, 1):
                 report += f"{i}. <a href='{item['link']}'>{item['title']}</a>\n\n"
             send_telegram(report)
         else:
+            # Automatic mode: only notify on NEW items
             for item in current_items:
                 if item["asin"] not in memory_asins:
                     send_telegram(f"🚨 <b>NEW!</b>\n{item['title']}\n🔗 <a href='{item['link']}'>Link</a>")
 
+        # Save to memory
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(current_items, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        if IS_MANUAL: send_telegram(f"❌ <b>Error:</b> {str(e)}")
+        if IS_MANUAL: send_telegram(f"❌ <b>System Error:</b> {str(e)}")
 
     if IS_MANUAL:
         send_telegram("💤 <b>Scan Complete.</b> Resuming 15-min checks.")
