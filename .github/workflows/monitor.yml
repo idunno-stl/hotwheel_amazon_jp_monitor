@@ -1,32 +1,39 @@
-name: Amazon JP Hot Wheels Monitor
+name: Amazon Hot Wheels Monitor
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # every 15 minutes (SAFE)
-  workflow_dispatch:
+    - cron: '*/20 * * * *' # Every 20 mins (safer than 15 to avoid bans)
+  workflow_dispatch: # Allows manual run
 
 jobs:
-  monitor:
+  run-monitor:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write # Crucial for saving the JSON file
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          pip install requests beautifulsoup4 lxml
+      - name: Install Deps
+        run: pip install requests beautifulsoup4
 
-      - name: Run monitor
+      - name: Run Script
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python monitor.py
+
+      - name: Save State
         run: |
-          python amazon_monitor.py
+          git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
-          git config --global user.name "monitor-bot"
           git add latest_seen.json
-          git commit -m "Update latest snapshot" || true
+          git commit -m "Update seen items [skip ci]" || exit 0
           git push
