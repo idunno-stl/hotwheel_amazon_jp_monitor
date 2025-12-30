@@ -1,39 +1,37 @@
-name: Amazon Hot Wheels Monitor
-
+name: HotWheels Monitor
 on:
   schedule:
-    - cron: '*/20 * * * *' # Every 20 mins (safer than 15 to avoid bans)
-  workflow_dispatch: # Allows manual run
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # This is the "Manual" button
 
 jobs:
-  run-monitor:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Crucial for saving the JSON file
-    
+      contents: write
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+      
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
+          
       - name: Install Deps
         run: pip install requests beautifulsoup4
-
-      - name: Run Script
+        
+      - name: Run Monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          # Tells python if we clicked the button manually
+          IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: python monitor.py
-
-      - name: Save State
+        
+      - name: Auto-Commit Progress
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
           git add latest_seen.json
-          git commit -m "Update seen items [skip ci]" || exit 0
+          git commit -m "Sync DB [skip ci]" || exit 0
           git push
