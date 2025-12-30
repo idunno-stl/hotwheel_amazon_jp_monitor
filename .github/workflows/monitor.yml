@@ -2,7 +2,7 @@ name: HotWheels Monitor
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # The 15-minute heart-beat
+    - cron: '*/15 * * * *' # Runs every 15 minutes
   workflow_dispatch:      # Allows the "Manual Run" button
 
 jobs:
@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: ambassadors/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
