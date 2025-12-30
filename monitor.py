@@ -21,30 +21,28 @@ def send_telegram(msg):
 def main():
     now = datetime.now().strftime("%H:%M")
     
-    # 1. LOAD THE MEMORY FIRST
+    # 1. WELCOME MESSAGE (Manual Only)
+    if IS_MANUAL:
+        send_telegram("👋 <b>Welcome back!</b>\nStarting manual scan of Amazon Japan now...")
+
+    # Load Memory
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, "w", encoding="utf-8") as f: json.dump([], f)
-    
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        try:
-            memory_data = json.load(f)
-            memory_asins = {item["asin"] for item in memory_data}
-        except:
-            memory_data, memory_asins = [], set()
+        memory_asins = set()
+    else:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            try:
+                memory_data = json.load(f)
+                memory_asins = {item["asin"] for item in memory_data}
+            except:
+                memory_asins = set()
 
-    # 2. IF YOU HIT 'RUN WORKFLOW', SEND MEMORY LINKS IMMEDIATELY
-    if IS_MANUAL:
-        if not memory_data:
-            send_telegram("📂 <b>Memory is currently empty.</b>\nRunning first scan now...")
-        else:
-            report = f"📂 <b>Last Saved Top 5 (Memory)</b>\nChecked at: <code>{now}</code>\n\n"
-            for i, item in enumerate(memory_data, 1):
-                report += f"{i}. <a href='{item['link']}'>{item['title']}</a>\n\n"
-            send_telegram(report)
-
-    # 3. NOW CHECK AMAZON FOR ACTUALLY NEW STUFF
+    # 2. FETCH FROM AMAZON
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept-Language": "ja-JP"}
     try:
+        # Small delay for authenticity
+        if IS_MANUAL: time.sleep(2) 
+        
         r = requests.get(AMAZON_URL, headers=headers, timeout=30)
         soup = BeautifulSoup(r.text, "html.parser")
         current_items = []
@@ -57,18 +55,29 @@ def main():
                 current_items.append({"asin": asin, "title": title_elem.get_text(strip=True), "link": f"https://www.amazon.co.jp/dp/{asin}"})
             if len(current_items) >= 5: break
 
-        # 4. ONLY ALERT IF ITEM IS NOT IN MEMORY
-        for item in current_items:
-            if item["asin"] not in memory_asins:
-                alert = f"🚨 <b>NEW PRE-ORDER LISTED!</b>\n\n{item['title']}\n🔗 <a href='{item['link']}'>Buy Now</a>"
-                send_telegram(alert)
+        # 3. REPORTING
+        if IS_MANUAL:
+            report = f"📋 <b>Current Top 5 on Amazon</b>\nTime: <code>{now}</code>\n\n"
+            for i, item in enumerate(current_items, 1):
+                report += f"{i}. <a href='{item['link']}'>{item['title']}</a>\n\n"
+            send_telegram(report)
+            
+            # THE SLEEP MESSAGE
+            send_telegram("💤 <b>Scan Complete.</b>\nGoing into sleep mode. I will continue checking every 15 minutes automatically.")
+        
+        else:
+            # AUTOMATIC RUN: Only send if a NEW ASIN is found
+            for item in current_items:
+                if item["asin"] not in memory_asins:
+                    alert = f"🚨 <b>NEW PRE-ORDER DETECTED!</b>\n\n{item['title']}\n🔗 <a href='{item['link']}'>Buy Now</a>"
+                    send_telegram(alert)
 
-        # 5. UPDATE THE MEMORY FILE
+        # 4. SAVE TO MEMORY
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(current_items, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        if IS_MANUAL: send_telegram(f"❌ Error: {e}")
+        if IS_MANUAL: send_telegram(f"❌ Error during manual scan: {e}")
 
 if __name__ == "__main__":
     main()
