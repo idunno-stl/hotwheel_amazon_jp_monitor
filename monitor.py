@@ -10,7 +10,6 @@ AMAZON_URL = "https://www.amazon.co.jp/s?k=hotwheels+%E3%83%9B%E3%83%83%E3%83%88
 DATA_FILE = "latest_seen.json"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-IS_MANUAL = os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
 def get_now():
     return datetime.now().strftime("%H:%M:%S")
@@ -23,8 +22,8 @@ def send_telegram(msg):
 
 def main():
     timestamp = get_now()
-    if IS_MANUAL:
-        send_telegram(f"🛰️ <b>[{timestamp}] Manual Scan Started...</b>")
+    # Requirement: Always notify when scan starts
+    send_telegram(f"🛰️ <b>[{timestamp}] Scan Started...</b>")
 
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, "w") as f: json.dump([], f)
@@ -41,6 +40,7 @@ def main():
     try:
         response = requests.get(AMAZON_URL, headers=headers, timeout=30)
         
+        # Requirement 4: Alert if blocked
         if response.status_code != 200:
             send_telegram(f"⚠️ <b>[{timestamp}] BLOCK ALERT:</b> Status {response.status_code}")
             return
@@ -48,18 +48,14 @@ def main():
         soup = BeautifulSoup(response.text, "html.parser")
         valid_real_items = []
 
-        # 1. Scrape EVERYTHING and filter out ads immediately
+        # 1. Scrape EVERYTHING and filter out ads (Promo Shit) immediately
         results = soup.select("div[data-component-type='s-search-result']")
         
         for div in results:
-            # --- STERN AD FILTERING ---
-            # Check for hidden ad attributes
             if div.get("data-ad-details") or div.get("data-ad-type"):
                 continue
-            # Check for the visual "Sponsored" label text/classes
             if div.select_one(".puis-sponsored-label-text") or div.select_one(".s-sponsored-label-info-icon"):
                 continue
-            # Backup text check
             div_text = div.get_text().lower()
             if any(p in div_text for p in ["sponsored", "スポンサー", "featured", "注目商品", "ad", "広告"]):
                 continue
@@ -71,24 +67,23 @@ def main():
             title = title_node.get_text(strip=True) if title_node else "Hot Wheels"
             link = f"https://www.amazon.co.jp/dp/{asin}"
 
-            # Add to our list of GENUINE products
             valid_real_items.append({"asin": asin, "title": title, "link": link})
 
         # 2. Slice to ONLY the Top 5 real items
         top_5_real = valid_real_items[:5]
         new_items_found = False
 
-        # 3. Only alert if these Top 5 contain something never seen before
+        # 3. Alert if these Top 5 contain something new
         for item in top_5_real:
             if item["asin"] not in memory_asins:
                 send_telegram(f"🚨 <b>NEW @ {get_now()}</b>\n{item['title']}\n🔗 <a href='{item['link']}'>Link</a>")
                 new_items_found = True
                 time.sleep(2)
 
-        if not new_items_found and IS_MANUAL:
-            send_telegram(f"💤 <b>[{get_now()}] Scan Complete.</b> No new items in Top 5.")
+        # Requirement: Always notify when scan ends/goes to sleep
+        send_telegram(f"💤 <b>[{get_now()}] Scan Complete.</b> Entering sleeping mode.")
 
-        # 4. Save the current Top 5 to memory
+        # 4. Save current Top 5 to memory
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(top_5_real, f, ensure_ascii=False, indent=2)
 
