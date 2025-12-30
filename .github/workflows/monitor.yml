@@ -1,37 +1,38 @@
 name: HotWheels Monitor
+
 on:
   schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch: # This is the "Manual" button
+    - cron: '*/15 * * * *' # The 15-minute heart-beat
+  workflow_dispatch:      # Allows the "Manual Run" button
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: ambassadors/setup-python@v2
         with:
-          python-version: '3.11'
-          
-      - name: Install Deps
+          python-version: '3.9'
+
+      - name: Install dependencies
         run: pip install requests beautifulsoup4
-        
-      - name: Run Monitor
+
+      - name: Run monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          # Tells python if we clicked the button manually
+          GOOGLE_PROXY_URL: ${{ secrets.GOOGLE_PROXY_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: python monitor.py
-        
-      - name: Auto-Commit Progress
+
+      - name: Commit changes
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
           git add latest_seen.json
-          git commit -m "Sync DB [skip ci]" || exit 0
+          git commit -m "Update memory" || exit 0
           git push
