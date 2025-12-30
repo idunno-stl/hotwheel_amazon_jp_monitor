@@ -12,45 +12,31 @@ DATA_FILE = "latest_seen.json"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 IS_MANUAL = os.getenv("IS_MANUAL") == "true"
-REPO = os.getenv('GITHUB_REPOSITORY')
 
-def send_telegram(msg, show_check_button=False):
+def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID, 
         "text": msg, 
         "parse_mode": "HTML",
-        "disable_web_page_preview": True # Keeps the chat clean
+        "disable_web_page_preview": True
     }
-    
-    if show_check_button:
-        # This button takes you directly to where you can trigger the 'Check'
-        reply_markup = {
-            "inline_keyboard": [[
-                {"text": "🔍 Check Top 5 Now", "url": f"https://github.com/{REPO}/actions/workflows/monitor.yml"}
-            ]]
-        }
-        payload["reply_markup"] = json.dumps(reply_markup)
-        
-    try:
-        requests.post(url, data=payload, timeout=15)
-    except Exception as e:
-        print(f"Failed to send: {e}")
+    requests.post(url, data=payload, timeout=15)
 
 def main():
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now().strftime("%H:%M")
     
-    # 1. Load History
+    # 1. Load Memory
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, "w", encoding="utf-8") as f: json.dump([], f)
-    
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            old_asins = {item["asin"] for item in json.load(f)}
-    except:
-        old_asins = set()
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        try:
+            old_data = json.load(f)
+            old_asins = {item["asin"] for item in old_data}
+        except:
+            old_data, old_asins = [], set()
 
-    # 2. Fetch current top 5 from Amazon
+    # 2. Scrape Amazon
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept-Language": "ja-JP"}
     time.sleep(random.uniform(2, 4))
 
@@ -67,26 +53,29 @@ def main():
                 current_items.append({"asin": asin, "title": title_elem.get_text(strip=True), "link": f"https://www.amazon.co.jp/dp/{asin}"})
             if len(current_items) >= 5: break
 
-        # 3. LOGIC: If Manual, send the full list NO MATTER WHAT
-        if IS_MANUAL:
-            report = f"📋 <b>Current Top 5 Items</b>\nTime: <code>{now}</code>\n\n"
-            for i, item in enumerate(current_items, 1):
-                report += f"{i}. <a href='{item['link']}'>{item['title']}</a>\n\n"
-            send_telegram(report, show_check_button=True)
-        
-        # 4. LOGIC: If Automatic, only send if an item is truly NEW
-        else:
-            for item in current_items:
-                if item["asin"] not in old_asins:
-                    alert = f"🚨 <b>NEW ARRIVAL</b>\n\n{item['title']}\n🔗 <a href='{item['link']}'>Buy Now</a>"
-                    send_telegram(alert, show_check_button=True)
+        # 3. SMART NOTIFICATION
+        new_items = [i for i in current_items if i["asin"] not in old_asins]
 
-        # 5. Save state
+        # Case A: Something is actually NEW (Automatic Alert)
+        if new_items:
+            alert = f"🚨 <b>NEW ARRIVAL!</b> ({now})\n\n"
+            for item in new_items:
+                alert += f"• {item['title']}\n🔗 <a href='{item['link']}'>Buy Now</a>\n\n"
+            send_telegram(alert)
+
+        # Case B: You clicked "Run" manually (Status Report)
+        elif IS_MANUAL:
+            report = f"📋 <b>Top 5 Status</b> ({now})\n(No new items found)\n\n"
+            for i, item in enumerate(current_items, 1):
+                report += f"{i}. <a href='{item['link']}'>{item['title']}</a>\n"
+            send_telegram(report)
+
+        # 4. Save
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(current_items, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        if IS_MANUAL: send_telegram(f"❌ Error: {e}", show_check_button=True)
+        if IS_MANUAL: send_telegram(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     main()
