@@ -2,8 +2,8 @@ name: Hot Wheels Monitor
 
 on:
   schedule:
-    - cron: '*/20 * * * *'  # Runs every 20 minutes
-  workflow_dispatch:        # Allows manual run button
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -35,6 +35,5 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add latest_seen.json
-          # The commit message now includes the current date/time for your logs
-          git commit -m "Memory Update $(date +'%Y-%m-%d %H:%M:%S') [skip ci]" || exit 0
+          git commit -m "Update $(date +'%H:%M') [skip ci]" || exit 0
           git push
