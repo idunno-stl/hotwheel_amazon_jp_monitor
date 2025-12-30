@@ -2,14 +2,14 @@ name: Hot Wheels Monitor
 
 on:
   schedule:
-    - cron: '*/45 * * * *' # Runs every 45 mins to save resources
-  workflow_dispatch:      # Allows you to run it manually
+    - cron: '*/20 * * * *'  # Runs every 20 minutes
+  workflow_dispatch:        # Allows manual run button
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write     # REQUIRED: Gives bot permission to save JSON files
+      contents: write
     
     steps:
       - name: Checkout code
@@ -21,13 +21,13 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          pip install requests beautifulsoup4
+        run: pip install requests beautifulsoup4
 
       - name: Run Scraper
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python monitor.py
 
       - name: Save Data
@@ -35,5 +35,6 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add latest_seen.json
-          git commit -m "Update seen items" || exit 0
+          # The commit message now includes the current date/time for your logs
+          git commit -m "Memory Update $(date +'%Y-%m-%d %H:%M:%S') [skip ci]" || exit 0
           git push
