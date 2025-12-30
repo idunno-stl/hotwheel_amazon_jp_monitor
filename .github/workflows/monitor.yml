@@ -2,14 +2,14 @@ name: Hot Wheels Monitor
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
-  workflow_dispatch:
+    - cron: '*/20 * * * *'  # Runs every 20 minutes
+  workflow_dispatch:        # Allows manual run
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write       # Fixes Error 128
     
     steps:
       - name: Checkout code
@@ -27,7 +27,8 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          # We don't strictly need GITHUB_EVENT_NAME anymore since 
+          # you want messages for both Auto and Manual runs.
         run: python monitor.py
 
       - name: Save Data
@@ -35,5 +36,5 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add latest_seen.json
-          git commit -m "Update $(date +'%H:%M') [skip ci]" || exit 0
+          git commit -m "Memory Sync [skip ci]" || exit 0
           git push
