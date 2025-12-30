@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import time
+import random
 from datetime import datetime
 from bs4 import BeautifulSoup
 
@@ -26,47 +27,63 @@ def main():
     
     # Load Memory
     if not os.path.exists(DATA_FILE):
-        # Added 'run_count' to track the 6-hour heartbeat
         with open(DATA_FILE, "w") as f: json.dump({"asins": [], "run_count": 0}, f)
     
     with open(DATA_FILE, "r") as f:
         try:
             data = json.load(f)
-            memory_asins = {item["asin"] for item in data.get("asins", [])}
-            run_count = data.get("run_count", 0)
+            # Support both old and new JSON structures
+            if isinstance(data, list):
+                memory_asins = {item["asin"] for item in data}
+                run_count = 0
+            else:
+                memory_asins = {item["asin"] for item in data.get("asins", [])}
+                run_count = data.get("run_count", 0)
         except:
             memory_asins = set()
             run_count = 0
 
-    # Requirement: Heartbeat Logic (Once every 9 runs = 6 hours at 40-min intervals)
+    # Heartbeat Logic (9 runs * 40 mins = 6 hours)
     run_count += 1
     if IS_MANUAL:
         send_telegram(f"🛰️ <b>[{timestamp}] Manual Scan Started...</b>")
     elif run_count >= 9:
-        send_telegram(f"🛡️ <b>6-Hour Heartbeat:</b> Bot is online. No blocks detected.")
-        run_count = 0 # Reset counter
+        send_telegram(f"🛡️ <b>6-Hour Heartbeat:</b> Bot is online.")
+        run_count = 0
 
+    # STEALTH HEADERS: Rotating User-Agents to avoid 503
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ]
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "ja-JP,ja;q=0.9"
+        "User-Agent": random.choice(user_agents),
+        "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.google.co.jp/", # Makes it look like a search click
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
     }
 
     try:
+        # Add a tiny random sleep to break the "exactly 40 mins" pattern
+        time.sleep(random.randint(1, 10))
+        
         response = requests.get(AMAZON_URL, headers=headers, timeout=30)
         
-        # Requirement 4: Alert if blocked (This ALWAYS pings you)
         if response.status_code != 200:
+            # If 503, don't update run_count so it retries the heartbeat later
             send_telegram(f"⚠️ <b>[{timestamp}] BLOCK ALERT:</b> Status {response.status_code}")
             return
 
         soup = BeautifulSoup(response.text, "html.parser")
         valid_real_items = []
 
-        # 1. Filter Promo Shit
         results = soup.select("div[data-component-type='s-search-result']")
         for div in results:
             if div.get("data-ad-details") or div.get("data-ad-type") or div.select_one(".puis-sponsored-label-text"):
                 continue
+            
             div_text = div.get_text().lower()
             if any(p in div_text for p in ["sponsored", "スポンサー", "featured", "ad", "広告"]):
                 continue
@@ -79,7 +96,6 @@ def main():
             link = f"https://www.amazon.co.jp/dp/{asin}"
             valid_real_items.append({"asin": asin, "title": title, "link": link})
 
-        # 2. Slice Top 5 & Check for New Items
         top_5_real = valid_real_items[:5]
         new_items_found = False
 
@@ -90,9 +106,9 @@ def main():
                 time.sleep(2)
 
         if not new_items_found and IS_MANUAL:
-            send_telegram(f"💤 <b>[{get_now()}] No new items.</b> Entering sleep mode.")
+            send_telegram(f"💤 <b>[{get_now()}] No new items.</b>")
 
-        # 3. Save Data (Including the run_count)
+        # Save current Top 5 and current run_count
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump({"asins": top_5_real, "run_count": run_count}, f, ensure_ascii=False, indent=2)
 
