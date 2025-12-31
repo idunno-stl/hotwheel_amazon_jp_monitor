@@ -13,7 +13,7 @@ DATA_FILE = "latest_seen.json"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 MAX_PRICE = 1000 
-MIN_PRICE = 100 # Safety floor to ignore points/shipping glitches
+MIN_PRICE = 100 
 IS_MANUAL = os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
 def get_now():
@@ -21,20 +21,15 @@ def get_now():
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": False}
+    payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}
     try: requests.post(url, data=payload, timeout=15)
     except: pass
 
 def get_stealth_headers():
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    ]
     return {
-        "User-Agent": random.choice(user_agents),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept-Language": "ja-JP,ja;q=0.9",
-        "Referer": "https://www.google.co.jp/",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        "Referer": "https://www.google.co.jp/"
     }
 
 def main():
@@ -47,65 +42,54 @@ def main():
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, dict):
-                    memory_asins = {item["asin"] for item in data.get("asins", [])}
-                    run_count = data.get("run_count", 0)
+                memory_asins = {item["asin"] for item in data.get("asins", [])}
+                run_count = data.get("run_count", 0)
         except: pass
 
-    # 2. HEARTBEAT / MANUAL STATUS
+    # 2. HEARTBEAT
     run_count += 1
     if IS_MANUAL:
-        send_telegram(f"🛰️ <b>[{timestamp}] Manual Scan Started...</b>\nTarget: < ¥{MAX_PRICE}")
-    elif run_count >= 9:
-        send_telegram(f"🛡️ <b>6-Hour Heartbeat:</b> Hunter Active.")
-        run_count = 0
+        send_telegram(f"🛰️ <b>[{timestamp}] Manual Scan Started...</b>")
 
     # 3. FETCH
     try:
-        time.sleep(random.randint(3, 7))
         response = requests.get(AMAZON_URL, headers=get_stealth_headers(), timeout=30)
     except Exception as e:
-        send_telegram(f"❌ <b>Fetch Error:</b> {str(e)}")
+        send_telegram(f"❌ Error: {str(e)}")
         return
 
-    if response.status_code != 200:
-        send_telegram(f"⚠️ <b>BLOCK ALERT:</b> Status {response.status_code}")
-        return
-
-    # 4. PARSE & DEEP SCAN
+    # 4. PARSE (Wider Net)
     soup = BeautifulSoup(response.text, "html.parser")
     valid_retail_items = []
+    # Look for ALL result items
     results = soup.find_all("div", {"data-component-type": "s-search-result"})
     
     for div in results:
-        # A. Ad Filter
-        if div.get("data-ad-details") or div.select_one(".puis-sponsored-label-text"):
-            continue
-        ad_text = div.find_all(string=re.compile(r'スポンサー|広告|Sponsored'))
-        if ad_text: continue
+        # A. AD CHECK (Slightly more relaxed)
+        if div.get("data-ad-details"): continue
         
-        # B. Keyword Filter
-        title_node = div.select_one("h2 a span")
+        # B. KEYWORD CHECK (Broadened)
+        title_node = div.select_one("h2")
         title = title_node.get_text(strip=True) if title_node else ""
-        if not any(k in title.lower() for k in ["hot wheels", "ホットウィール", "hotwheels"]):
+        if not any(k in title.lower() for k in ["hot", "wheels", "ホットウィール"]):
             continue
 
-        # C. Price Extraction (Improved for 990Yen / Points Fix)
+        # C. PRICE EXTRACTION (Find ANY price on the card)
         price_val = 0
-        # Try a-offscreen first as it usually contains the clean '¥990' string
-        offscreen = div.select_one(".a-offscreen")
-        whole = div.select_one(".a-price-whole")
+        price_text = div.get_text()
+        # Look for "¥" or "￥" followed by numbers
+        found_prices = re.findall(r'[¥￥](\d{1,3}(?:,\d{3})*)', price_text)
         
-        target_node = offscreen if offscreen else whole
-        if target_node:
-            raw_p = target_node.get_text(strip=True).replace(",", "").replace("￥", "").replace("¥", "")
-            try:
-                # Extract digits and convert
-                digits = re.sub(r'\D', '', raw_p)
-                price_val = int(digits) if digits else 0
-            except: price_val = 0
+        if found_prices:
+            # Take the first price found and clean it
+            price_val = int(found_prices[0].replace(",", ""))
+        else:
+            # Fallback to standard classes if regex fails
+            p_node = div.select_one(".a-price-whole")
+            if p_node:
+                price_val = int(re.sub(r'\D', '', p_node.get_text()))
 
-        # D. The Price Gate (¥100 to ¥1000)
+        # D. FILTER
         if not (MIN_PRICE <= price_val <= MAX_PRICE):
             continue
 
@@ -122,24 +106,18 @@ def main():
     # 5. NOTIFY
     new_found = False
     for item in valid_retail_items:
-        # If Manual Run, show everything regardless of memory to confirm it works
-        # If Automatic, only show if NOT in memory
+        # Force send everything on Manual run to see what the bot is seeing
         if IS_MANUAL or (item["asin"] not in memory_asins):
-            prefix = "🔍 <b>FOUND</b>" if IS_MANUAL else "🚨 <b>NEW DROP</b>"
-            send_telegram(f"{prefix} @ {get_now()}\n{item['title']}\n💰 <b>Price: {item['price']}</b>\n🔗 <a href='{item['link']}'>Link</a>")
+            send_telegram(f"🚨 <b>MATCH FOUND</b>\n{item['title']}\n💰 <b>Price: {item['price']}</b>\n🔗 <a href='{item['link']}'>Link</a>")
             new_found = True
             memory_asins.add(item["asin"])
-            time.sleep(1)
 
     if not new_found and IS_MANUAL:
-        send_telegram(f"💤 <b>[{get_now()}] No retail items found on Page 1.</b>\n(Items may be >¥{MAX_PRICE} or Sponsored)")
+        send_telegram(f"💤 <b>No matches.</b> Prices found were likely too high or text didn't match.")
 
     # 6. SAVE
-    try:
-        # Save the top items to memory to prevent spam on next auto-run
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump({"asins": valid_retail_items[:15], "run_count": run_count}, f, ensure_ascii=False, indent=2)
-    except: pass
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump({"asins": valid_retail_items[:10], "run_count": run_count}, f, ensure_ascii=False, indent=2)
 
 if __name__ == "__main__":
     main()
