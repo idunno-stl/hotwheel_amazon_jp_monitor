@@ -13,6 +13,7 @@ DATA_FILE = "latest_seen.json"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 MAX_PRICE = 1000 
+MIN_PRICE = 100 # Safety floor to ignore "5pt" or "10pt" glitches
 IS_MANUAL = os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
 def get_now():
@@ -56,12 +57,12 @@ def main():
     if IS_MANUAL:
         send_telegram(f"🛰️ <b>[{timestamp}] Manual Scan Started...</b>")
     elif run_count >= 9:
-        send_telegram(f"🛡️ <b>6-Hour Heartbeat:</b> Bot Active.")
+        send_telegram(f"🛡️ <b>6-Hour Heartbeat:</b> Hunter is online.")
         run_count = 0
 
     # 3. FETCH
     try:
-        time.sleep(random.randint(5, 10))
+        time.sleep(random.randint(5, 12))
         response = requests.get(AMAZON_URL, headers=get_stealth_headers(), timeout=30)
     except Exception as e:
         send_telegram(f"❌ <b>Fetch Error:</b> {str(e)}")
@@ -71,40 +72,37 @@ def main():
         send_telegram(f"⚠️ <b>BLOCK ALERT:</b> Status {response.status_code}")
         return
 
-    # 4. PARSE & TRIPLE FILTER
+    # 4. PARSE & DEEP SCAN
     soup = BeautifulSoup(response.text, "html.parser")
     valid_retail_items = []
     results = soup.find_all("div", {"data-component-type": "s-search-result"})
     
     for div in results:
-        # A. KILL PROMO SHIT (Aggressive)
-        # Check for hidden ad labels
-        is_ad = False
-        ad_check = div.find_all(string=re.compile(r'スポンサー|広告|Sponsored|Promoted'))
-        if ad_check or div.get("data-ad-details") or div.select_one(".puis-sponsored-label-text"):
-            is_ad = True
+        # A. Ad Filter (Japanese/English labels)
+        if div.get("data-ad-details") or div.select_one(".puis-sponsored-label-text"):
+            continue
+        ad_text = div.find_all(string=re.compile(r'スポンサー|広告|Sponsored'))
+        if ad_text: continue
         
-        if is_ad: continue
-        
-        # B. KEYWORD CHECK
+        # B. Keyword Filter
         title_node = div.select_one("h2 a span")
         title = title_node.get_text(strip=True) if title_node else ""
         if not any(k in title.lower() for k in ["hot wheels", "ホットウィール", "hotwheels"]):
             continue
 
-        # C. CORRECT PRICE EXTRACTION (Finds the actual 'Whole' price)
+        # C. Point-Proof Price Extraction
         price_val = 99999
-        # Target the specific container for price to avoid picking up 'Was' prices or discounts
-        price_container = div.select_one(".a-price-whole")
-        if price_container:
-            # Clean text: remove commas, currency symbols, and non-breaking spaces
-            raw_p = price_container.get_text(strip=True).replace(",", "").replace("￥", "").replace("¥", "")
+        # Check offscreen price first (usually most accurate) then visual whole price
+        price_node = div.select_one(".a-price-whole") or div.select_one(".a-offscreen")
+        
+        if price_node:
+            raw_p = price_node.get_text(strip=True).replace(",", "").replace("￥", "").replace("¥", "")
             try:
                 price_val = int(re.sub(r'\D', '', raw_p))
             except: pass
 
-        # Only process if it fits your retail budget
-        if price_val > MAX_PRICE:
+        # D. The Price Gate (Only 100 to 1000 Yen)
+        if not (MIN_PRICE <= price_val <= MAX_PRICE):
             continue
 
         asin = div.get("data-asin")
@@ -127,12 +125,13 @@ def main():
             time.sleep(2)
 
     if not new_found and IS_MANUAL:
-        send_telegram(f"💤 <b>[{get_now()}] No new retail items.</b>")
+        send_telegram(f"💤 <b>[{get_now()}] No new retail items found.</b>")
 
-    # 6. SAVE
+    # 6. SAVE (Memory Cycling)
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump({"asins": valid_retail_items[:5], "run_count": run_count}, f, ensure_ascii=False, indent=2)
+            # We save the top 10 most recent to be safe against restock buried under junk
+            json.dump({"asins": valid_retail_items[:10], "run_count": run_count}, f, ensure_ascii=False, indent=2)
     except: pass
 
 if __name__ == "__main__":
