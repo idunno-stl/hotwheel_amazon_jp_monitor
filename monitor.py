@@ -26,19 +26,20 @@ def send_telegram(msg):
 
 def get_stealth_headers():
     user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     ]
     return {
         "User-Agent": random.choice(user_agents),
         "Accept-Language": "ja-JP,ja;q=0.9",
-        "Referer": "https://www.google.co.jp/"
+        "Referer": "https://www.google.co.jp/",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
     }
 
 def main():
     timestamp = get_now()
     
-    # 1. LOAD MEMORY (With Error Safety)
+    # 1. LOAD MEMORY
     memory_asins = set()
     run_count = 0
     if os.path.exists(DATA_FILE):
@@ -48,21 +49,17 @@ def main():
                 if isinstance(data, dict):
                     memory_asins = {item["asin"] for item in data.get("asins", [])}
                     run_count = data.get("run_count", 0)
-                elif isinstance(data, list): # Handle old format
-                    memory_asins = {item["asin"] for item in data}
-        except Exception:
-            pass # If file is corrupt, we just start fresh
+        except: pass
 
     # 2. HEARTBEAT
     run_count += 1
     if IS_MANUAL:
         send_telegram(f"🛰️ <b>[{timestamp}] Manual Scan Started...</b>")
     elif run_count >= 9:
-        send_telegram(f"🛡️ <b>6-Hour Heartbeat:</b> Bot Online (Deep Scan Mode).")
+        send_telegram(f"🛡️ <b>6-Hour Heartbeat:</b> Bot Active.")
         run_count = 0
 
     # 3. FETCH
-    response = None
     try:
         time.sleep(random.randint(5, 10))
         response = requests.get(AMAZON_URL, headers=get_stealth_headers(), timeout=30)
@@ -70,36 +67,43 @@ def main():
         send_telegram(f"❌ <b>Fetch Error:</b> {str(e)}")
         return
 
-    if not response or response.status_code != 200:
-        send_telegram(f"⚠️ <b>[{timestamp}] BLOCK ALERT:</b> Status {response.status_code if response else 'Timeout'}")
+    if response.status_code != 200:
+        send_telegram(f"⚠️ <b>BLOCK ALERT:</b> Status {response.status_code}")
         return
 
-    # 4. PARSE & DEEP FILTER (Scans the whole page)
+    # 4. PARSE & TRIPLE FILTER
     soup = BeautifulSoup(response.text, "html.parser")
     valid_retail_items = []
-    results = soup.select("div[data-component-type='s-search-result']")
+    results = soup.find_all("div", {"data-component-type": "s-search-result"})
     
     for div in results:
-        # A. Filter Ads
-        if div.get("data-ad-details") or div.select_one(".puis-sponsored-label-text"):
-            continue
+        # A. KILL PROMO SHIT (Aggressive)
+        # Check for hidden ad labels
+        is_ad = False
+        ad_check = div.find_all(string=re.compile(r'スポンサー|広告|Sponsored|Promoted'))
+        if ad_check or div.get("data-ad-details") or div.select_one(".puis-sponsored-label-text"):
+            is_ad = True
         
-        # B. Filter Unrelated (Keyword Check)
-        title_node = div.select_one("h2 a span") or div.select_one("h2")
+        if is_ad: continue
+        
+        # B. KEYWORD CHECK
+        title_node = div.select_one("h2 a span")
         title = title_node.get_text(strip=True) if title_node else ""
         if not any(k in title.lower() for k in ["hot wheels", "ホットウィール", "hotwheels"]):
             continue
 
-        # C. Price Check
-        price_val = 99999 
-        price_node = div.select_one(".a-price-whole")
-        if price_node:
+        # C. CORRECT PRICE EXTRACTION (Finds the actual 'Whole' price)
+        price_val = 99999
+        # Target the specific container for price to avoid picking up 'Was' prices or discounts
+        price_container = div.select_one(".a-price-whole")
+        if price_container:
+            # Clean text: remove commas, currency symbols, and non-breaking spaces
+            raw_p = price_container.get_text(strip=True).replace(",", "").replace("￥", "").replace("¥", "")
             try:
-                # Clean Japanese price formatting
-                raw_price = price_node.get_text(strip=True).replace(",", "").replace("￥", "")
-                price_val = int(re.sub(r'\D', '', raw_price))
+                price_val = int(re.sub(r'\D', '', raw_p))
             except: pass
 
+        # Only process if it fits your retail budget
         if price_val > MAX_PRICE:
             continue
 
@@ -113,7 +117,7 @@ def main():
             "link": f"https://www.amazon.co.jp/dp/{asin}"
         })
 
-    # 5. NOTIFY (Catches restocks anywhere on Page 1)
+    # 5. NOTIFY
     new_found = False
     for item in valid_retail_items:
         if item["asin"] not in memory_asins:
@@ -123,14 +127,13 @@ def main():
             time.sleep(2)
 
     if not new_found and IS_MANUAL:
-        send_telegram(f"💤 <b>[{get_now()}] No new retail items found.</b>")
+        send_telegram(f"💤 <b>[{get_now()}] No new retail items.</b>")
 
-    # 6. SAVE (Top 5 only to keep memory cycling)
+    # 6. SAVE
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump({"asins": valid_retail_items[:5], "run_count": run_count}, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Save Error: {e}")
+    except: pass
 
 if __name__ == "__main__":
     main()
