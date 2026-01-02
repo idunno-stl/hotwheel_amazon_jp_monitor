@@ -2,7 +2,7 @@ name: Hot Wheels Monitor
 
 on:
   schedule:
-    - cron: '*/40 * * * *'  # Extended frequency for stealth
+    - cron: '*/25 * * * *'  # Extended frequency for stealth
   workflow_dispatch:
 
 jobs:
