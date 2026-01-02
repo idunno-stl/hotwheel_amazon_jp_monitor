@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 
 # ================= CONFIG =================
 # Simplified clean URL to reduce bot detection
-BASE_URL = "https://www.amazon.co.jp/-/en/s?k=%E3%83%9B%E3%83%83%E3%83%88%E3%82%A6%E3%82%A3%E3%83%BC%E3%83%AB+car+culture&i=toys&s=date-desc-rank"
+BASE_URL = "https://www.amazon.co.jp/s?k=ホットウィール+car+culture&i=toys&crid=1CEJKV1505NFX&sprefix=%2Ctoys%2C420&ref=nb_sb_ss_recent_1_0_recent"
 DATA_FILE = "latest_seen.json"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
